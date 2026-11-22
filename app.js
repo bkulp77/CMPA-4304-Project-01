@@ -233,6 +233,46 @@ async function lookupBook() {
   }
 }
 
+async function lookupExistingBook(row, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const cleanIsbn = String(row.isbn || '').replace(/[^0-9Xx]/g, '').toUpperCase();
+    const title = row.title || '';
+    const author = row.author || '';
+    const year = row.year || '';
+    if (cleanIsbn.length < 10 && !title && !author) {
+      alert('This book needs an ISBN, title, or author to look up.');
+      return;
+    }
+    let info = await tryGoogleBooks(cleanIsbn, title, author, year);
+    let source = 'Google Books';
+    if (!info || !info.title) {
+      info = await tryOpenLibrary(cleanIsbn, title, author, year);
+      source = 'Open Library';
+    }
+    if (!info || !info.title) {
+      throw new Error('No matching books found');
+    }
+    // Update the row
+    if (info.title) row.title = info.title;
+    if (info.author) row.author = info.author;
+    if (info.year) row.year = info.year;
+    if (info.isbn && !row.isbn) row.isbn = info.isbn;
+    if (info.summary) row.summary = info.summary;
+    if (info.coverUrl) {
+      const dataUrl = await fetchCoverAsDataUrl(info.coverUrl);
+      row.image = dataUrl || info.coverUrl;
+    }
+    await saveInventory();
+    renderCurrentView();
+    alert(`Updated from ${source}.`);
+  } catch (err) {
+    alert('Could not look up book: ' + (err.message || err));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Lookup'; }
+  }
+}
+
 document.getElementById('lookup-isbn-btn').addEventListener('click', lookupBook);
 
 function readImage(file) {
@@ -340,7 +380,7 @@ function renderTable(rows) {
       <td class="edit-room"></td>
       <td class="edit-bookshelf"></td>
       <td class="edit-shelf"></td>
-      <td><button class="notes-btn edit-btn" type="button">Edit</button></td>`;
+      <td><button class="notes-btn edit-btn" type="button">Edit</button> <button class="notes-btn lookup-row-btn" type="button">Lookup</button></td>`;
     tr.querySelector('.img-cell-wrapper').addEventListener('click', (event) => {
       event.preventDefault();
       photoTargetRow = row;
@@ -356,6 +396,7 @@ function renderTable(rows) {
     bindEditable(tr.querySelector('.edit-bookshelf'), row, 'bookshelf', escapeHtml(row.bookshelf || ''));
     bindEditable(tr.querySelector('.edit-shelf'), row, 'shelf', escapeHtml(row.shelf || ''));
     tr.querySelector('.edit-btn').addEventListener('click', () => openEdit(row));
+    tr.querySelector('.lookup-row-btn').addEventListener('click', (e) => lookupExistingBook(row, e.target));
     tr.querySelector('.minus').addEventListener('click', async () => {
       row.quantity = Math.max(0, (parseInt(row.quantity, 10) || 0) - 1);
       if (row.quantity === 0) inventoryData = inventoryData.filter(item => item.id !== row.id);
@@ -407,32 +448,84 @@ function renderShelf(rows) {
     board.appendChild(unit);
   });
 }
+function renderList(rows, title) {
+  const board = document.getElementById('list-board');
+  board.innerHTML = `<h3 style="margin-top:0;">${escapeHtml(title)}</h3>`;
+  const wantOnly = (rows || []).filter(r => String(r.status || '').trim().toLowerCase() === 'want');
+  if (!wantOnly.length) {
+    board.innerHTML += '<p style="color:#5E6A72;">No books on the wish list yet. Set a book’s status to “Want” to see it here.</p>';
+    return;
+  }
+  wantOnly.forEach(row => {
+    const card = document.createElement('div');
+    card.className = 'book-card';
+    const img = row.image ? `<img src="${row.image}" alt="">` : `<div class="item-pic">📖</div>`;
+    card.innerHTML = `
+      ${img}
+      <div class="book-card-info">
+        <h4>${escapeHtml(row.title || 'Untitled')}</h4>
+        <p>${escapeHtml(row.author || 'Unknown author')} · ${escapeHtml(row.year || '')}</p>
+        <p>Status: ${escapeHtml(row.status || '')}</p>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="notes-btn edit-wish-btn" type="button">Edit</button>
+          <button class="notes-btn move-btn" type="button" style="background:#2F5D50;">Move to Inventory</button>
+          <button class="notes-btn delete-wish-btn" type="button" style="background:#8B3A3A;">Delete</button>
+        </div>
+      </div>
+    `;
+    card.querySelector('.edit-wish-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEdit(row);
+    });
+    card.querySelector('.move-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      row.status = 'Unread';
+      await saveInventory();
+      lastRenderedRows = inventoryData;
+      renderCurrentView();
+    });
+    card.querySelector('.delete-wish-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete “${row.title || 'this book'}” from the wish list?`)) return;
+      inventoryData = inventoryData.filter(item => item.id !== row.id);
+      await saveInventory();
+      lastRenderedRows = inventoryData;
+      renderCurrentView();
+    });
+    board.appendChild(card);
+  });
+}
 let currentView = 'table';
 function renderCurrentView() {
-  const rows = lastRenderedRows.length ? lastRenderedRows : inventoryData;
-  updateSummary(rows);
+  const allRows = lastRenderedRows.length ? lastRenderedRows : inventoryData;
+  const owned = allRows.filter(r => String(r.status || '').trim().toLowerCase() !== 'want');
+  updateSummary(owned);
+  document.getElementById('table-view').style.display = 'none';
+  document.getElementById('shelf-view').style.display = 'none';
+  document.getElementById('list-view').style.display = 'none';
   if (currentView === 'shelf') {
-    document.getElementById('table-view').style.display = 'none';
     document.getElementById('shelf-view').style.display = 'block';
-    renderShelf(rows);
+    renderShelf(owned);
+  } else if (currentView === 'wish') {
+    document.getElementById('list-view').style.display = 'block';
+    renderList(allRows.filter(r => String(r.status || '').toLowerCase() === 'want'), 'Wish List');
   } else {
     document.getElementById('table-view').style.display = 'block';
-    document.getElementById('shelf-view').style.display = 'none';
-    renderTable(rows);
+    renderTable(owned);
   }
 }
-document.getElementById('view-table-btn').addEventListener('click', () => {
-  currentView = 'table';
-  document.getElementById('view-table-btn').classList.add('active');
-  document.getElementById('view-shelf-btn').classList.remove('active');
+function setView(view) {
+  currentView = view;
+  lastRenderedRows = inventoryData;
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+  const map = { table: 'view-table-btn', shelf: 'view-shelf-btn', wish: 'view-wish-btn' };
+  const btn = document.getElementById(map[view]);
+  if (btn) btn.classList.add('active');
   renderCurrentView();
-});
-document.getElementById('view-shelf-btn').addEventListener('click', () => {
-  currentView = 'shelf';
-  document.getElementById('view-shelf-btn').classList.add('active');
-  document.getElementById('view-table-btn').classList.remove('active');
-  renderCurrentView();
-});
+}
+document.getElementById('view-table-btn').addEventListener('click', () => setView('table'));
+document.getElementById('view-shelf-btn').addEventListener('click', () => setView('shelf'));
+document.getElementById('view-wish-btn').addEventListener('click', () => setView('wish'));
 function openEdit(row) {
   document.getElementById('edit-id').value = row.id;
   document.getElementById('edit-title').textContent = `Edit ${row.title || 'book'}`;

@@ -58,7 +58,12 @@ tr:hover td { background:#F3F7F5; }
 @media (max-width:720px) { body { padding:10px; } .controls, .csv-actions, .view-toggle { flex-direction:column; align-items:stretch; } }
 
 /* Shelf view */
-.shelf-view { padding:16px; margin-bottom:18px; }
+.shelf-view, .list-view { padding:16px; margin-bottom:18px; }
+.book-card { display:flex; gap:14px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; align-items:flex-start; }
+.book-card img, .book-card .item-pic { width:50px; height:70px; object-fit:cover; border-radius:4px; flex-shrink:0; }
+.book-card-info { flex:1; }
+.book-card-info h4 { margin:0 0 4px; font-size:16px; }
+.book-card-info p { margin:0 0 4px; font-size:14px; color:var(--muted); }
 #shelf-board { max-height:65vh; overflow-y:auto; }
 .shelf-group { margin-bottom:24px; }
 .shelf-group-title { font-weight:700; margin:0 0 8px; color:var(--ink); }
